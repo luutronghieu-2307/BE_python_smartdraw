@@ -20,7 +20,8 @@ COPY requirements.txt ./
 
 RUN pip install --upgrade pip && \
     pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.2 torchvision==0.17.2 && \
-    pip install -r requirements.txt
+    pip install -r requirements.txt && \
+    pip install python-multipart==0.0.9
 
 COPY . .
 
