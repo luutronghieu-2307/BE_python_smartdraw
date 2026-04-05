@@ -1,0 +1,9 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic-settings==2.4.0
+sqlalchemy==2.0.32
+alembic==1.13.2
+numpy==1.26.4
+opencv-python==4.9.0.80
+vidgear[videocapture]==0.3.2
+ultralytics==8.2.103
