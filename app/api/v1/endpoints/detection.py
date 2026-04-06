@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
+from app.core.config import settings
 from app.services.detection import detect_people_and_annotate
 
 router = APIRouter()
@@ -16,7 +17,7 @@ router = APIRouter()
 async def detect_people_from_upload(
     request: Request,
     file: UploadFile = File(...),
-    conf: float = 0.25,
+    conf: float = settings.yolo_conf_threshold,
 ) -> dict[str, object]:
     contents = await file.read()
     if not contents:

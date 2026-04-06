@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -85,8 +89,27 @@ def _draw_label(image: np.ndarray, bbox: list[int], lines: list[str], color: tup
         current_y += baseline + line_gap
 
 
-def execute_inference_pipeline(image: np.ndarray, conf: float = 0.25) -> tuple[np.ndarray, dict[str, Any]]:
-    detections, yolo_device = detect_people(image, conf=conf)
+def execute_inference_pipeline(image: np.ndarray, conf: float | None = None) -> tuple[np.ndarray, dict[str, Any]]:
+    if conf is None:
+        from app.core.config import settings
+
+        conf = float(settings.yolo_conf_threshold)
+    
+    # Thêm timeout cho detection để tránh block stream
+    detections = []
+    yolo_device = "cpu"
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(detect_people, image, conf)
+            detections, yolo_device = future.result(timeout=1.0)  # Timeout 1 giây
+    except concurrent.futures.TimeoutError:
+        # Nếu timeout, trả về kết quả rỗng nhưng stream vẫn chạy
+        detections = []
+        yolo_device = "timeout"
+    except Exception as e:
+        detections = []
+        yolo_device = f"error: {str(e)}"
+    
     annotated = image.copy()
     objects: list[dict[str, Any]] = []
     mobilenet_device: str | None = None
@@ -98,7 +121,17 @@ def execute_inference_pipeline(image: np.ndarray, conf: float = 0.25) -> tuple[n
         if roi is None:
             continue
 
-        prediction, mobilenet_device = classify_roi(roi)
+        # Thêm timeout cho classification
+        prediction = {"DI_XA": "KHONG", "classes": []}
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(classify_roi, roi)
+                prediction, mobilenet_device = future.result(timeout=0.5)  # Timeout 0.5 giây
+        except concurrent.futures.TimeoutError:
+            mobilenet_device = "timeout"
+        except Exception as e:
+            mobilenet_device = f"error: {str(e)}"
+        
         di_xa = prediction.get("DI_XA", "KHONG")
         class_lines = [
             f"person conf: {detection['confidence']:.2f}",
@@ -140,12 +173,68 @@ def execute_inference_pipeline(image: np.ndarray, conf: float = 0.25) -> tuple[n
             cv2.LINE_AA,
         )
 
+    # MQTT Publishing logic
+    try:
+        from app.services.mqtt_state import get_mqtt_state_manager
+        from app.services.mqtt_client import get_mqtt_client
+        
+        # Tính toán trạng thái DI_XA
+        has_people = len(objects) > 0
+        has_di_xa_co = any(obj.get("person", {}).get("DI_XA") == "CO" for obj in objects)
+        
+        # Cập nhật state và kiểm tra xem có cần publish không
+        state_manager = get_mqtt_state_manager()
+        should_publish, message = state_manager.update_detection(has_people, has_di_xa_co)
+        
+        if should_publish and message:
+            # Publish đến MQTT
+            mqtt_client = get_mqtt_client()
+            metadata = {
+                "people_count": len(objects),
+                "has_di_xa_co": has_di_xa_co,
+                "detection_time": time.time(),
+                "objects_count": len(objects),
+            }
+            success = mqtt_client.publish_detection_status(message, metadata)
+            
+            if success:
+                logger = logging.getLogger(__name__)
+                logger.info(f"MQTT published: {message} (people: {len(objects)}, DI_XA_CO: {has_di_xa_co})")
+            else:
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to publish MQTT: {message}")
+                
+    except ImportError as e:
+        # MQTT module chưa được cài đặt
+        pass
+    except Exception as e:
+        # Log lỗi nhưng không làm crash pipeline
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in MQTT publishing: {e}", exc_info=True)
+    
+    # Thu thập thông tin MQTT state nếu có
+    mqtt_state_info = {}
+    try:
+        from app.services.mqtt_state import get_mqtt_state_manager
+        state_manager = get_mqtt_state_manager()
+        mqtt_state_info = {
+            "current_state": state_manager.current_state,
+            "last_publish_time": state_manager.last_publish_time,
+            "last_on_time": state_manager.last_on_time,
+            "has_sent_off_after_on": state_manager.has_sent_off_after_on,
+            "last_detection_time": state_manager.last_detection_time,
+            "cooldown_seconds": state_manager.cooldown_seconds,
+        }
+    except Exception:
+        pass
+    
     return annotated, {
         "status": "ok",
         "people_count": len(objects),
         "yolo_device": yolo_device,
         "mobilenet_device": mobilenet_device,
         "objects": objects,
+        "mqtt_state": mqtt_state_info,
     }
 
 

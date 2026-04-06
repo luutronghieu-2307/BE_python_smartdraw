@@ -13,6 +13,7 @@ from torchvision import transforms
 from torchvision.models import mobilenet_v2
 
 from app.core.config import settings
+from app.services.image_enhancement import enhance_camera_frame
 
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -107,6 +108,7 @@ def _preprocess_image(image: Image.Image) -> torch.Tensor:
 def _predict_attributes_from_pil(image: Image.Image) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
     model, labels, device = load_classification_model()
     tensor = _preprocess_image(image).to(device)
+    threshold = float(settings.mobilenet_conf_threshold)
 
     with torch.no_grad():
         logits = model(tensor)
@@ -119,13 +121,13 @@ def _predict_attributes_from_pil(image: Image.Image) -> tuple[list[dict[str, Any
             {
                 "class_id": idx,
                 "label": class_name,
-                "status": "CO" if prob >= 0.5 else "KHONG",
+                "status": "CO" if prob >= threshold else "KHONG",
                 "confidence": prob,
             }
         )
 
     best = max(class_results, key=lambda item: item["confidence"]) if class_results else None
-    active_labels = [item for item in class_results if item["confidence"] >= 0.5]
+    active_labels = [item for item in class_results if item["confidence"] >= threshold]
     summary_label = " | ".join(f"{item['label']} {item['confidence'] * 100:.1f}%" for item in active_labels)
     if not summary_label and best is not None:
         summary_label = f"{best['label']} {best['confidence'] * 100:.1f}%"
@@ -142,6 +144,7 @@ def _predict_attributes_from_pil(image: Image.Image) -> tuple[list[dict[str, Any
 
 
 def classify_roi(image: np.ndarray) -> tuple[dict[str, Any], str]:
+    image = enhance_camera_frame(image)
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).convert("RGB")
     _, prediction, device = _predict_attributes_from_pil(pil_image)
     prediction["device"] = device
@@ -149,6 +152,7 @@ def classify_roi(image: np.ndarray) -> tuple[dict[str, Any], str]:
 
 
 def classify_image_and_annotate(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any], str]:
+    image = enhance_camera_frame(image)
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).convert("RGB")
     class_results, prediction, device = _predict_attributes_from_pil(pil_image)
 

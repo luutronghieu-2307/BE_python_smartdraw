@@ -10,6 +10,7 @@ import torch
 from ultralytics import YOLO
 
 from app.core.config import settings
+from app.services.image_enhancement import enhance_camera_frame
 
 
 @lru_cache(maxsize=2)
@@ -92,7 +93,9 @@ def _draw_people_boxes(image: np.ndarray, result: Any) -> tuple[np.ndarray, list
     return annotated, detections
 
 
-def detect_people_and_annotate(image: np.ndarray, conf: float = 0.25) -> tuple[np.ndarray, list[dict[str, Any]], str]:
+def detect_people_and_annotate(image: np.ndarray, conf: float | None = None) -> tuple[np.ndarray, list[dict[str, Any]], str]:
+    conf = float(settings.yolo_conf_threshold if conf is None else conf)
+    image = enhance_camera_frame(image)
     model, device = load_detection_model()
     use_half = device.startswith("cuda")
     results = model.predict(source=image, conf=conf, classes=[0], device=device, half=use_half, verbose=False)
@@ -101,7 +104,9 @@ def detect_people_and_annotate(image: np.ndarray, conf: float = 0.25) -> tuple[n
     return annotated, detections, device
 
 
-def detect_people(image: np.ndarray, conf: float = 0.25) -> tuple[list[dict[str, Any]], str]:
+def detect_people(image: np.ndarray, conf: float | None = None) -> tuple[list[dict[str, Any]], str]:
+    conf = float(settings.yolo_conf_threshold if conf is None else conf)
+    image = enhance_camera_frame(image)
     model, device = load_detection_model()
     use_half = device.startswith("cuda")
     results = model.predict(source=image, conf=conf, classes=[0], device=device, half=use_half, verbose=False)
