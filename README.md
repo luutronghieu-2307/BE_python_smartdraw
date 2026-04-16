@@ -38,6 +38,18 @@ Project scaffold backend API Python chuẩn dùng FastAPI.
 - YOLOv8 sẽ detect tất cả người trong ảnh, crop từng ROI theo thứ tự trái sang phải, rồi MobileNetV2 sẽ phân loại từng ROI
 - Kết quả trả về: tọa độ bbox, nhãn, confidence và `image_url` của ảnh đã vẽ bounding box + nhãn
 
+## Light control for Flutter mobile app
+- API điều khiển đèn: `POST /api/v1/light/control`
+- Body: `{ "state": "on" }` hoặc `{ "state": "off" }`
+- QR bootstrap tự sinh lúc backend khởi động và lưu tại `media/qr/server-connection-qr.png`
+- Có thể mở trực tiếp: `GET /api/v1/light/qr`
+- QR chứa JSON compact gồm `u` và `e`
+- Format QR: `{ "u": "http://<ip>:8000", "e": "/api/v1/light/control" }`
+
+## Docker networking for same Wi‑Fi QR
+- API container chạy bằng `network_mode: host` để QR tự dùng đúng IP LAN của máy chạy backend
+- Điện thoại cần ở cùng Wi‑Fi với máy chạy Docker để quét QR và gọi API được ngay
+
 ## Thư viện đã ghim
 - `fastapi==0.115.0`
 - `uvicorn[standard]==0.30.6`

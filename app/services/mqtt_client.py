@@ -32,6 +32,7 @@ class MQTTClient:
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_publish = self._on_publish
+        self.client.on_message = self._on_message
         
         # State
         self._connected = False
@@ -39,6 +40,7 @@ class MQTTClient:
         self._connection_attempts = 0
         self._max_reconnect_attempts = 5
         self._reconnect_delay = 2  # seconds
+        self._message_handler = None  # Handler cho incoming messages
         
     def _on_connect(self, client, userdata, flags, rc):
         """Callback khi kết nối thành công"""
@@ -61,6 +63,54 @@ class MQTTClient:
     def _on_publish(self, client, userdata, mid):
         """Callback khi publish thành công"""
         logger.debug(f"MQTT message published (mid: {mid})")
+    
+    def _on_message(self, client, userdata, msg):
+        """Callback khi nhận message từ subscribed topic"""
+        if self._message_handler:
+            try:
+                payload = msg.payload.decode() if isinstance(msg.payload, bytes) else msg.payload
+                self._message_handler(msg.topic, payload)
+            except Exception as e:
+                logger.error(f"Error handling message from {msg.topic}: {e}")
+    
+    def set_message_handler(self, handler: Callable[[str, str], None]) -> None:
+        """
+        Set handler cho incoming messages
+        
+        Args:
+            handler: Callable(topic, payload_str)
+        """
+        self._message_handler = handler
+        logger.info("MQTT message handler registered")
+    
+    def subscribe(self, topic: str, qos: int = 0) -> bool:
+        """
+        Subscribe đến topic
+        
+        Args:
+            topic: Topic name
+            qos: Quality of Service
+            
+        Returns:
+            True nếu subscribe thành công
+        """
+        with self._lock:
+            if not self._connected:
+                if not self.connect():
+                    logger.warning(f"Cannot subscribe, MQTT not connected")
+                    return False
+            
+            try:
+                result = self.client.subscribe(topic, qos=qos)
+                if result[0] == mqtt.MQTT_ERR_SUCCESS:
+                    logger.info(f"Subscribed to {topic}")
+                    return True
+                else:
+                    logger.error(f"Subscribe failed for {topic} with code {result[0]}")
+                    return False
+            except Exception as e:
+                logger.error(f"Error subscribing to {topic}: {e}")
+                return False
     
     def connect(self) -> bool:
         """Kết nối đến MQTT broker"""
@@ -170,6 +220,62 @@ class MQTTClient:
         
         return self.publish(
             settings.mqtt_topic,
+            json.dumps(payload),
+            qos=1,
+            retain=False
+        )
+    
+    def publish_drawer_command(self, command: str, metadata: Optional[dict] = None, topic: Optional[str] = None) -> bool:
+        """
+        Publish drawer command (open/close) đến ESP32
+        
+        Args:
+            command: "open" hoặc "close"
+            metadata: Thông tin bổ sung
+            
+        Returns:
+            True nếu publish thành công
+        """
+        if command not in ["open", "close"]:
+            logger.error(f"Invalid drawer command: {command}")
+            return False
+        
+        payload = {
+            "status": "ON" if command == "open" else "OFF",
+            "timestamp": time.time(),
+            "source": "pythonSVIOT",
+            "command": command,
+        }
+        
+        if metadata:
+            payload.update(metadata)
+        
+        return self.publish(
+            topic or settings.mqtt_drawer_command_topic,
+            json.dumps(payload),
+            qos=1,
+            retain=False
+        )
+
+    def publish_drawer_control(self, command: str, metadata: Optional[dict] = None) -> bool:
+        """Publish drawer control cấp cao từ app tới ESP32."""
+        if command not in ["open", "close"]:
+            logger.error(f"Invalid drawer command: {command}")
+            return False
+
+        payload = {
+            "command": command,
+            "status": "ON" if command == "open" else "OFF",
+            "timestamp": time.time(),
+            "source": "pythonSVIOT",
+            "mode": "app_control",
+        }
+
+        if metadata:
+            payload.update(metadata)
+
+        return self.publish(
+            settings.mqtt_drawer_control_topic,
             json.dumps(payload),
             qos=1,
             retain=False

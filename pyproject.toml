@@ -18,6 +18,9 @@ dependencies = [
   "torchvision>=0.17.2",
   "sqlalchemy>=2.0.0",
   "alembic>=1.13.0",
+  "yt-dlp>=2025.1.15",
+  "qrcode[pil]>=8.0.0",
+  "firebase-admin>=6.6.0",
 ]
 
 [project.optional-dependencies]

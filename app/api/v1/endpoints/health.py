@@ -1,60 +1,85 @@
-from datetime import datetime
+from __future__ import annotations
+
 import time
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import cv2
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import APIRouter, Depends, Request
 
-from app.core.video_stream import get_camera_hub, initialize_vidgear_stream
+from app.core.dependencies import (
+    get_optional_vidgear_stream,
+    initialize_vidgear_stream,
+)
+from app.core.video_stream import VidGearStream
 
 router = APIRouter()
 
 
-def _frame_sharpness(frame) -> float:
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+def _frame_sharpness(frame: Any) -> float:
+    """Return a simple sharpness score based on Laplacian variance."""
+    if len(frame.shape) == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = frame
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
 @router.get("")
 def health_check() -> dict[str, str]:
+    """Basic health check endpoint."""
     return {"status": "ok"}
 
 
-@router.get("/camera")
-def camera_health_check() -> dict[str, str | bool | float | None | list[int] | str]:
-    stream = None
-    try:
-        stream = initialize_vidgear_stream()
-        frame = stream.read()
-        fps = stream.fps
-        shape = list(frame.shape) if frame is not None else None
+@router.get("/camera", response_model=None)
+def camera_health_check(stream: VidGearStream | None = Depends(get_optional_vidgear_stream)) -> dict[str, Any]:
+    """
+    Checks the health of the camera stream by attempting to read a frame.
+    """
+    if stream is None:
         return {
-            "status": "ok" if frame is not None else "error",
-            "connected": True,
-            "frame_received": frame is not None,
-            "fps": fps,
+            "status": "error",
+            "stream_running": False,
+            "frame_received": False,
+            "detail": "VidGearStream is not available.",
+        }
+
+    try:
+        # In THREADED_QUEUE_MODE, read() is non-blocking.
+        # We can try reading a few times to see if a frame is available.
+        frame = None
+        for _ in range(10):
+            frame = stream.read()
+            if frame is not None:
+                break
+            time.sleep(0.01)
+
+        is_running = stream.is_running
+        is_ok = frame is not None
+        shape = list(frame.shape) if is_ok else None
+
+        return {
+            "status": "ok" if is_ok and is_running else "error",
+            "stream_running": is_running,
+            "frame_received": is_ok,
             "frame_shape": shape,
         }
     except Exception as exc:
         return {
             "status": "error",
-            "connected": False,
+            "stream_running": False,
             "frame_received": False,
-            "fps": None,
-            "frame_shape": None,
             "detail": str(exc),
         }
-    finally:
-        if stream is not None:
-            stream.stop()
+
 
 
 @router.get("/camera/frame")
 def camera_first_frame(request: Request) -> dict[str, str | bool | float | list[int] | None]:
     stream = None
     try:
-        stream = initialize_vidgear_stream(time_delay=2)
+        stream = initialize_vidgear_stream()
 
         frame = None
         frame_std = None
@@ -151,7 +176,7 @@ def camera_stream_stability(
 ) -> dict[str, str | bool | float | int | None]:
     stream = None
     try:
-        stream = initialize_vidgear_stream(time_delay=2)
+        stream = initialize_vidgear_stream()
 
         start_time = time.time()
         received_frames = 0
@@ -213,69 +238,3 @@ def camera_stream_stability(
             stream.stop()
 
 
-@router.get("/camera/live")
-def camera_live_stream() -> StreamingResponse:
-    hub = get_camera_hub()
-
-    def generate_frames():
-        last_sent_time = 0.0
-        while True:
-            frame = hub.get_frame()
-            if frame is None or getattr(frame, "size", 0) == 0:
-                time.sleep(0.02)
-                continue
-
-            now = time.time()
-            if now - last_sent_time < 0.03:
-                time.sleep(0.01)
-                continue
-
-            if len(frame.shape) == 2:
-                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            elif len(frame.shape) == 3 and frame.shape[2] == 4:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
-            ok, buffer = cv2.imencode(".jpg", frame)
-            if not ok:
-                time.sleep(0.02)
-                continue
-
-            last_sent_time = now
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-            )
-
-    return StreamingResponse(
-        generate_frames(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-@router.get("/camera/view", response_class=HTMLResponse)
-def camera_live_view(request: Request) -> HTMLResponse:
-    live_url = request.url_for("camera_live_stream")
-    html = f"""
-    <!doctype html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Camera Live View</title>
-        <style>
-          body {{ margin: 0; background: #111; color: #eee; font-family: Arial, sans-serif; }}
-          .wrap {{ padding: 16px; }}
-          img {{ width: 100%; max-width: 1280px; border: 1px solid #333; border-radius: 8px; display: block; }}
-          a {{ color: #8ab4f8; }}
-        </style>
-      </head>
-      <body>
-        <div class="wrap">
-          <h2>Camera Live Stream</h2>
-          <p>Stream URL: <a href="{live_url}">{live_url}</a></p>
-          <img src="{live_url}" alt="camera live stream" />
-        </div>
-      </body>
-    </html>
-    """
-    return HTMLResponse(content=html)

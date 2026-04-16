@@ -13,7 +13,7 @@ from torchvision import transforms
 from torchvision.models import mobilenet_v2
 
 from app.core.config import settings
-from app.services.image_enhancement import enhance_camera_frame
+from app.services.image_enhancement import enhance_frame_for_ai
 
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -144,7 +144,7 @@ def _predict_attributes_from_pil(image: Image.Image) -> tuple[list[dict[str, Any
 
 
 def classify_roi(image: np.ndarray) -> tuple[dict[str, Any], str]:
-    image = enhance_camera_frame(image)
+    image = enhance_frame_for_ai(image)
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).convert("RGB")
     _, prediction, device = _predict_attributes_from_pil(pil_image)
     prediction["device"] = device
@@ -152,7 +152,7 @@ def classify_roi(image: np.ndarray) -> tuple[dict[str, Any], str]:
 
 
 def classify_image_and_annotate(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any], str]:
-    image = enhance_camera_frame(image)
+    image = enhance_frame_for_ai(image)
     pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)).convert("RGB")
     class_results, prediction, device = _predict_attributes_from_pil(pil_image)
 

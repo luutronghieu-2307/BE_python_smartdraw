@@ -10,5 +10,8 @@ Pillow==10.4.0
 torch==2.2.2
 torchvision==0.17.2
 vidgear[videocapture]==0.3.2
+yt-dlp>=2025.1.15
 ultralytics==8.2.103
 paho-mqtt==1.6.1
+qrcode[pil]==8.2
+firebase-admin==6.6.0
